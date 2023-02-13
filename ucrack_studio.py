@@ -2,20 +2,45 @@ import asyncio
 import aiohttp
 
 from re import findall
+from imbox import Imbox
 from random import choice
 from loguru import logger
 from aiohttp import ClientSession
+from string import digits, ascii_letters
 from pyuseragents import random as random_useragent
-from string import digits, ascii_letters, punctuation
+
+
+def get_imap(provider: str, login: str, password: str):
+    return Imbox(
+        provider,
+        username=login,
+        password=password,
+        ssl=True,
+        ssl_context=None,
+        starttls=None)
+
+
+async def get_token_email(email: str, password: str):
+    imbox = get_imap('outlook.office365.com', email, password)
+    return(await recv_message(imbox))
+
+
+async def recv_message(imbox: Imbox):
+    folder = "Inbox"
+    for _, message in imbox.messages(folder=folder)[::-1]:
+        if message.sent_from[0]["email"] == "no-reply@ucrackstudio.com":
+            return findall(r'"https:\/\/ucrackstudio.com\/register\/(.+)"', message.body["plain"][0])[0].split('"')[0]
+    return(await recv_message(imbox))
 
 
 async def sending_captcha(client: ClientSession):
     try:
         response = await client.get(f'http://api.captcha.guru/in.php?key={user_key}&method=userrecaptcha \
-            &googlekey=6LezJBAjAAAAAMn-H25FUbbmvUR7WX8P-2JAWELC&pageurl=https://ucrackstudio.com/')
+            &googlekey=6LezJBAjAAAAAMn-H25FUbbmvUR7WX8P-2JAWELC&pageurl=https://ucrackstudio.com/&softguru=129939')
         data = await response.text()
         if 'ERROR' in data:
-            logger.error(print(data))
+            logger.error(data)
+            await asyncio.sleep(1)
             return(await sending_captcha(client))
         id = data[3:]
         return(await solving_captcha(client, id))
@@ -29,53 +54,14 @@ async def solving_captcha(client: ClientSession, id: str):
             response = await client.get(f'http://api.captcha.guru/res.php?key={user_key}&action=get&id={id}')
             data = await response.text()
             if 'ERROR' in data:
-                logger.error(print(data))
-                raise Exception()
+                logger.error(data)
+                return(await sending_captcha(client))
             elif 'OK' in data:
                 return(data[3:])
             return(await solving_captcha(client, id))
         except:
             raise Exception()
-    raise Exception()
-
-
-async def create_email(client: ClientSession):
-    try:
-        response = await client.get("https://www.1secmail.com/api/v1/?action=genRandomMailbox&count=1")
-        email = (await response.json())[0]
-        return email
-    except Exception:
-        logger.error("Failed to create email")
-        await asyncio.sleep(1)
-        return await create_email(client)
-
-
-async def check_email(client: ClientSession, login: str, domain: str, count: int):
-    try:
-        response = await client.get('https://www.1secmail.com/api/v1/?action=getMessages&'
-                                    f'login={login}&domain={domain}')
-        email_id = (await response.json())[0]['id']
-        return(email_id)
-    except:
-        while count < 30:
-            count += 1
-            await asyncio.sleep(1)
-            return await check_email(client, login, domain, count)
-        logger.error('Emails not found')
-        raise Exception()
-
-
-async def get_token(client: ClientSession, login: str, domain: str, email_id):
-    try:
-        response = await client.get('https://www.1secmail.com/api/v1/?action=readMessage&'
-                                    f'login={login}&domain={domain}&id={email_id}')
-        data = (await response.json())['body']
-        token = findall(
-            r'"https:\/\/ucrackstudio.com\/register\/(.+)"', data)[0]
-        return(token)
-    except:
-        logger.error('Failed to get token')
-        raise Exception()
+    return(await sending_captcha(client))
 
 
 async def register(client: ClientSession, email: str, password: str, token: str):
@@ -94,15 +80,15 @@ async def register(client: ClientSession, email: str, password: str, token: str)
         raise Exception()
 
 
-async def worker():
+async def worker(q: asyncio.Queue):
     while True:
         try:
             async with aiohttp.ClientSession(
                 headers={'user-agent': random_useragent()}
             ) as client:
 
-                logger.info('Get email')
-                email = await create_email(client)
+                emails = await q.get()
+                email, password_email = emails.split(":")
 
                 logger.info('Send email')
                 await client.post('https://api.orca.ucrackstudio.com/request-handler/accounts/sendEmailVerificationToken',
@@ -111,11 +97,8 @@ async def worker():
                                       'language': 'EN'
                                   })
 
-                logger.info('Check email')
-                email_id = await check_email(client, email.split('@')[0], email.split('@')[1], 0)
-
                 logger.info('Get token')
-                token = await get_token(client, email.split('@')[0], email.split('@')[1], email_id)
+                token = await get_token_email(email, password_email)
 
                 password = ''.join(
                     [choice(digits + ascii_letters + '!#$%&*+-=?@^_') for _ in range(15)])
@@ -123,9 +106,10 @@ async def worker():
                 logger.info('Registration')
                 await register(client, email, password, token)
         except:
+            with open('error.txt', 'a', encoding='utf-8') as file:
+                file.write(f'{email}:{password_email}\n')
             logger.error('Error\n')
         else:
-            logger.info('Saving data')
             with open('registered.txt', 'a', encoding='utf-8') as file:
                 file.write(f'{email}:{password}\n')
             logger.success('Successfully\n')
@@ -134,7 +118,14 @@ async def worker():
 
 
 async def main():
-    tasks = [asyncio.create_task(worker()) for _ in range(threads)]
+    emails = open("emails.txt", "r+").read().strip().split("\n")
+
+    q = asyncio.Queue()
+
+    for account in list(emails):
+        q.put_nowait(account)
+
+    tasks = [asyncio.create_task(worker(q)) for _ in range(threads)]
     await asyncio.gather(*tasks)
 
     
