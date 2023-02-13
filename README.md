@@ -14,6 +14,10 @@ pip install -r requirements.txt
 ```
 
 ## 💻 Preparing
+**Bot only supports @hotmail emails with activated IMAP**
++ Create ```emails.txt``` in the project folder
++ Insert emails each on a new line
+  + Example: ```email@hotmail.ru:password```
 + Register and replenish the balance <a href="https://captcha.guru/">captcha.guru</a>
 + Run the bot:
 ```python
@@ -27,8 +31,6 @@ python ucrack_studio.py
 
 + ```Delay(sec)``` - delay between referral registrations in seconds
 + ```Threads``` - number of simultaneous registrations
-
-Temporary email addresses are used to register accounts
 
 **Successfully registered accounts are saved in** ```registered.txt``` **in the format** ```{email}:{password}```
 
